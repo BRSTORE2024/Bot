@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard Admin Bot</title>
+    <style>
+        body { font-family: sans-serif; padding: 30px; background: #f4f7f6; }
+        .container { max-width: 800px; margin: auto; }
+        .card { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; }
+        button { background: #007bff; color: #fff; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+        button.del { background: #dc3545; padding: 5px 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border-bottom: 1px solid #eee; padding: 10px; text-align: left; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="card">
+        <h2>⚙️ Konfigurasi Bot</h2>
+        <input id="botToken" type="text" placeholder="Telegram Bot Token">
+        <input id="midKey" type="text" placeholder="Midtrans Server Key">
+        <button onclick="saveConfig()">Update Config</button>
+    </div>
+
+    <div class="card">
+        <h2>➕ Tambah Produk</h2>
+        <input id="pNama" type="text" placeholder="Nama Produk">
+        <input id="pHarga" type="number" placeholder="Harga">
+        <button onclick="addProd()" style="background: #28a745;">Tambah Produk</button>
+    </div>
+
+    <div class="card">
+        <h2>📦 Daftar Produk</h2>
+        <table id="tableProd">
+            <thead><tr><th>Nama</th><th>Harga</th><th>Aksi</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    async function init() {
+        const r = await fetch('/api/admin/data');
+        const d = await r.json();
+        document.getElementById('botToken').value = d.config.bot_token;
+        document.getElementById('midKey').value = d.config.midtrans_key;
+        
+        const body = document.querySelector('#tableProd tbody');
+        body.innerHTML = d.produk.map(p => `
+            <tr>
+                <td>${p.nama}</td>
+                <td>Rp ${p.harga.toLocaleString()}</td>
+                <td><button class="del" onclick="delProd('${p.id}')">Hapus</button></td>
+            </tr>
+        `).join('');
+    }
+
+    async function saveConfig() {
+        await fetch('/api/admin/update-config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                bot_token: document.getElementById('botToken').value,
+                midtrans_key: document.getElementById('midKey').value
+            })
+        });
+        alert('Tersimpan! Silahkan restart node bot.js di RDP.');
+    }
+
+    async function addProd() {
+        await fetch('/api/admin/add-product', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                nama: document.getElementById('pNama').value,
+                harga: document.getElementById('pHarga').value
+            })
+        });
+        init();
+    }
+
+    async function delProd(id) {
+        await fetch('/api/admin/delete-product/'+id, { method: 'DELETE' });
+        init();
+    }
+
+    init();
+</script>
+</body>
+</html>
