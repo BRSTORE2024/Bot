@@ -108,4 +108,4 @@ app.post('/notification', async (req, res) => {
 
 // ================= RUN SERVER =================
 bot.launch();
-app.listen(3000, '0.0.0.0', () => console.log('Sistem Berjalan di Port 3000'));
+app.listen(80, '0.0.0.0', () => console.log('Sistem Berjalan di Port 3000'));
