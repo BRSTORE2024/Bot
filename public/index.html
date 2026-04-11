@@ -1,38 +1,46 @@
 <!DOCTYPE html>
-<html>
+<html lang="id">
 <head>
-    <title>Dashboard Admin Bot</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Bot Jualan</title>
     <style>
-        body { font-family: sans-serif; padding: 30px; background: #f4f7f6; }
+        body { font-family: 'Segoe UI', sans-serif; padding: 20px; background: #f4f7f6; color: #333; }
         .container { max-width: 800px; margin: auto; }
-        .card { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; }
-        button { background: #007bff; color: #fff; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
-        button.del { background: #dc3545; padding: 5px 10px; }
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+        button { background: #0088cc; color: white; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; }
+        button:hover { background: #0077b3; }
+        .del-btn { background: #e74c3c; width: auto; padding: 5px 10px; font-size: 12px; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { border-bottom: 1px solid #eee; padding: 10px; text-align: left; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="card">
-        <h2>⚙️ Konfigurasi Bot</h2>
-        <input id="botToken" type="text" placeholder="Telegram Bot Token">
-        <input id="midKey" type="text" placeholder="Midtrans Server Key">
-        <button onclick="saveConfig()">Update Config</button>
+        <h3>⚙️ Konfigurasi Sistem</h3>
+        <label>Telegram Bot Token</label>
+        <input id="botToken" type="password" placeholder="123456:ABC-DEF...">
+        <label>Midtrans Server Key</label>
+        <input id="midKey" type="password" placeholder="SB-Mid-server-...">
+        <button onclick="saveConfig()">Simpan & Update Sistem</button>
     </div>
 
     <div class="card">
-        <h2>➕ Tambah Produk</h2>
-        <input id="pNama" type="text" placeholder="Nama Produk">
-        <input id="pHarga" type="number" placeholder="Harga">
-        <button onclick="addProd()" style="background: #28a745;">Tambah Produk</button>
+        <h3>➕ Tambah Produk</h3>
+        <input id="pNama" type="text" placeholder="Nama Produk (misal: Diamond 100)">
+        <input id="pHarga" type="number" placeholder="Harga (IDR)">
+        <button onclick="addProd()" style="background: #27ae60;">Tambah Produk</button>
     </div>
 
     <div class="card">
-        <h2>📦 Daftar Produk</h2>
+        <h3>📦 Daftar Produk</h3>
         <table id="tableProd">
-            <thead><tr><th>Nama</th><th>Harga</th><th>Aksi</th></tr></thead>
+            <thead>
+                <tr><th>Nama</th><th>Harga</th><th>Aksi</th></tr>
+            </thead>
             <tbody></tbody>
         </table>
     </div>
@@ -42,44 +50,47 @@
     async function init() {
         const r = await fetch('/api/admin/data');
         const d = await r.json();
-        document.getElementById('botToken').value = d.config.bot_token;
-        document.getElementById('midKey').value = d.config.midtrans_key;
+        document.getElementById('botToken').value = d.config.bot_token || '';
+        document.getElementById('midKey').value = d.config.midtrans_key || '';
         
         const body = document.querySelector('#tableProd tbody');
         body.innerHTML = d.produk.map(p => `
             <tr>
                 <td>${p.nama}</td>
                 <td>Rp ${p.harga.toLocaleString()}</td>
-                <td><button class="del" onclick="delProd('${p.id}')">Hapus</button></td>
+                <td><button class="del-btn" onclick="delProd('${p.id}')">Hapus</button></td>
             </tr>
         `).join('');
     }
 
     async function saveConfig() {
+        const bot_token = document.getElementById('botToken').value;
+        const midtrans_key = document.getElementById('midKey').value;
         await fetch('/api/admin/update-config', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                bot_token: document.getElementById('botToken').value,
-                midtrans_key: document.getElementById('midKey').value
-            })
+            body: JSON.stringify({ bot_token, midtrans_key })
         });
-        alert('Tersimpan! Silahkan restart node bot.js di RDP.');
+        alert('Konfigurasi diperbarui! Sistem telah melakukan refresh otomatis.');
+        location.reload();
     }
 
     async function addProd() {
+        const nama = document.getElementById('pNama').value;
+        const harga = document.getElementById('pHarga').value;
+        if(!nama || !harga) return alert('Mohon isi nama dan harga!');
         await fetch('/api/admin/add-product', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                nama: document.getElementById('pNama').value,
-                harga: document.getElementById('pHarga').value
-            })
+            body: JSON.stringify({ nama, harga })
         });
+        document.getElementById('pNama').value = '';
+        document.getElementById('pHarga').value = '';
         init();
     }
 
     async function delProd(id) {
+        if(!confirm('Hapus produk ini?')) return;
         await fetch('/api/admin/delete-product/'+id, { method: 'DELETE' });
         init();
     }
