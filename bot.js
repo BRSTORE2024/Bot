@@ -2,15 +2,11 @@ const { Telegraf, Markup } = require('telegraf');
 const midtransClient = require('midtrans-client');
 const express = require('express');
 const fs = require('fs');
-const path = require('path');
+const axios = require('axios'); // Tambahkan axios untuk download gambar jika perlu
 
 const app = express();
-
-// Middleware Penting
 app.use(express.json());
 app.use(express.static('public'));
-
-// Bypass Ngrok Warning Page
 app.use((req, res, next) => {
     res.setHeader('ngrok-skip-browser-warning', 'true');
     next();
@@ -19,21 +15,95 @@ app.use((req, res, next) => {
 const DATA_PRODUK = './data/produk.json';
 const DATA_CONFIG = './data/config.json';
 
-// Helper Fungsi Data
 const readData = (file) => {
     if (!fs.existsSync(file)) return file.includes('produk') ? [] : {};
     return JSON.parse(fs.readFileSync(file, 'utf-8'));
 };
 const saveData = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
-// Load Initial Config
 let config = readData(DATA_CONFIG);
 
-// Inisialisasi Bot & Midtrans
+// GUNAKAN CORE API (Bukan Snap)
+let coreApi = new midtransClient.CoreApi({
+    isProduction: false,
+    serverKey: config.midtrans_key || 'DUMMY_KEY',
+    clientKey: config.client_key || 'DUMMY_KEY'
+});
+
 let bot = new Telegraf(config.bot_token || 'DUMMY_TOKEN');
-let snap = new midtransClient.Snap({
-    isProduction: false, 
-    serverKey: config.midtrans_key || 'DUMMY_KEY'
+
+// ================= BOT LOGIC =================
+
+bot.start((ctx) => {
+    const produk = readData(DATA_PRODUK);
+    if (produk.length === 0) return ctx.reply("Etalase kosong.");
+    const keyboard = produk.map(p => [Markup.button.callback(`${p.nama} - Rp${p.harga.toLocaleString()}`, `buy_${p.id}`)]);
+    ctx.reply(`Halo ${ctx.from.first_name}!\nPilih produk untuk mendapatkan QRIS:`, Markup.inlineKeyboard(keyboard));
+});
+
+bot.action(/buy_(.+)/, async (ctx) => {
+    const productId = ctx.match[1];
+    const item = readData(DATA_PRODUK).find(p => p.id === productId);
+    if (!item) return ctx.reply('Produk tidak ditemukan.');
+
+    await ctx.answerCbQuery(`Generating QRIS...`);
+
+    try {
+        const orderId = `INV-${Date.now()}-${ctx.from.id}`;
+        
+        // Parameter Core API untuk QRIS
+        let parameter = {
+            "payment_type": "gopay", // Di Midtrans, QRIS biasanya melalui gopay/qris
+            "transaction_details": {
+                "order_id": orderId,
+                "gross_amount": item.harga
+            }
+        };
+
+        const response = await coreApi.charge(parameter);
+        
+        // Ambil URL QRIS dari respons (biasanya ada di actions[0].url)
+        const qrisUrl = response.actions.find(a => a.name === 'generate-qr-code').url;
+
+        await ctx.replyWithPhoto(qrisUrl, {
+            caption: 
+                `🔳 *QRIS PEMBAYARAN RESMI* 🔳\n` +
+                `───────────────────────\n` +
+                `📦 *Produk:* ${item.nama}\n` +
+                `💰 *Total:* Rp ${item.harga.toLocaleString()}\n` +
+                `🆔 *Order ID:* \`${orderId}\`\n` +
+                `───────────────────────\n\n` +
+                `✅ *Support Scan:* GoPay, OVO, Dana, LinkAja, ShopeePay, & Semua M-Banking.\n\n` +
+                `⏳ _Silahkan selesaikan pembayaran, bot akan otomatis mengirimkan notifikasi jika sukses._`,
+            parse_mode: 'Markdown'
+        });
+
+    } catch (e) {
+        console.error(e);
+        ctx.reply("Gagal membuat QRIS. Pastikan Server Key Sandbox kamu benar.");
+    }
+});
+
+// ================= WEBHOOK (Sama seperti sebelumnya) =================
+
+app.post('/notification', async (req, res) => {
+    try {
+        const statusResponse = await coreApi.transaction.notification(req.body);
+        const orderId = statusResponse.order_id;
+        const transactionStatus = statusResponse.transaction_status;
+        const userId = orderId.split('-')[2];
+
+        if (transactionStatus == 'settlement') {
+            await bot.telegram.sendMessage(userId, `✅ *PEMBAYARAN BERHASIL!*\nPesanan \`${orderId}\` sukses.`);
+        }
+        res.status(200).send('OK');
+    } catch (error) {
+        res.status(500).send('Error');
+    }
+});
+
+bot.launch();
+app.listen(3000, '0.0.0.0', () => console.log(`🚀 Server Core API Jalan!`));
 });
 
 // ================= WEB ADMIN API =================
