@@ -2,11 +2,12 @@ const { Telegraf, Markup } = require('telegraf');
 const midtransClient = require('midtrans-client');
 const express = require('express');
 const fs = require('fs');
-const axios = require('axios'); // Tambahkan axios untuk download gambar jika perlu
 
 const app = express();
 app.use(express.json());
 app.use(express.static('public'));
+
+// Bypass Ngrok Warning Page
 app.use((req, res, next) => {
     res.setHeader('ngrok-skip-browser-warning', 'true');
     next();
@@ -15,6 +16,7 @@ app.use((req, res, next) => {
 const DATA_PRODUK = './data/produk.json';
 const DATA_CONFIG = './data/config.json';
 
+// Helper Fungsi Data
 const readData = (file) => {
     if (!fs.existsSync(file)) return file.includes('produk') ? [] : {};
     return JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -23,7 +25,7 @@ const saveData = (file, data) => fs.writeFileSync(file, JSON.stringify(data, nul
 
 let config = readData(DATA_CONFIG);
 
-// GUNAKAN CORE API (Bukan Snap)
+// Inisialisasi Core API & Bot
 let coreApi = new midtransClient.CoreApi({
     isProduction: false,
     serverKey: config.midtrans_key || 'DUMMY_KEY',
@@ -32,8 +34,106 @@ let coreApi = new midtransClient.CoreApi({
 
 let bot = new Telegraf(config.bot_token || 'DUMMY_TOKEN');
 
+// ================= WEB ADMIN API =================
+
+app.get('/api/admin/data', (req, res) => {
+    res.json({ produk: readData(DATA_PRODUK), config: readData(DATA_CONFIG) });
+});
+
+app.post('/api/admin/add-product', (req, res) => {
+    const { nama, harga } = req.body;
+    let produk = readData(DATA_PRODUK);
+    produk.push({ id: 'p' + Date.now(), nama, harga: parseInt(harga) });
+    saveData(DATA_PRODUK, produk);
+    res.json({ success: true });
+});
+
+app.delete('/api/admin/delete-product/:id', (req, res) => {
+    let produk = readData(DATA_PRODUK).filter(p => p.id !== req.params.id);
+    saveData(DATA_PRODUK, produk);
+    res.json({ success: true });
+});
+
+app.post('/api/admin/update-config', (req, res) => {
+    saveData(DATA_CONFIG, req.body);
+    config = req.body;
+    coreApi = new midtransClient.CoreApi({
+        isProduction: false,
+        serverKey: config.midtrans_key,
+        clientKey: config.client_key
+    });
+    bot = new Telegraf(config.bot_token);
+    res.json({ success: true });
+});
+
 // ================= BOT LOGIC =================
 
+bot.start((ctx) => {
+    const produk = readData(DATA_PRODUK);
+    if (produk.length === 0) return ctx.reply("Etalase kosong.");
+    const keyboard = produk.map(p => [Markup.button.callback(`${p.nama} - Rp${p.harga.toLocaleString()}`, `buy_${p.id}`)]);
+    ctx.reply(`Halo ${ctx.from.first_name}!\nPilih produk untuk mendapatkan QRIS:`, Markup.inlineKeyboard(keyboard));
+});
+
+bot.action(/buy_(.+)/, async (ctx) => {
+    const productId = ctx.match[1];
+    const item = readData(DATA_PRODUK).find(p => p.id === productId);
+    if (!item) return ctx.reply('Produk tidak ditemukan.');
+
+    await ctx.answerCbQuery(`Generating QRIS...`);
+
+    try {
+        const orderId = `INV-${Date.now()}-${ctx.from.id}`;
+        let parameter = {
+            "payment_type": "gopay",
+            "transaction_details": {
+                "order_id": orderId,
+                "gross_amount": item.harga
+            }
+        };
+
+        const response = await coreApi.charge(parameter);
+        const qrisUrl = response.actions.find(a => a.name === 'generate-qr-code').url;
+
+        await ctx.replyWithPhoto(qrisUrl, {
+            caption: 
+                `🔳 *PEMBAYARAN QRIS* 🔳\n` +
+                `───────────────────────\n` +
+                `📦 *Produk:* ${item.nama}\n` +
+                `💰 *Total:* Rp ${item.harga.toLocaleString()}\n` +
+                `🆔 *Order ID:* \`${orderId}\`\n` +
+                `───────────────────────\n\n` +
+                `✅ *Scan via:* GoPay, OVO, Dana, LinkAja, ShopeePay & M-Banking.\n\n` +
+                `⏳ _Otomatis terkonfirmasi setelah bayar._`,
+            parse_mode: 'Markdown'
+        });
+    } catch (e) {
+        console.error(e);
+        ctx.reply("Gagal membuat QRIS.");
+    }
+});
+
+// ================= WEBHOOK =================
+
+app.post('/notification', async (req, res) => {
+    try {
+        const statusResponse = await coreApi.transaction.notification(req.body);
+        const orderId = statusResponse.order_id;
+        const transactionStatus = statusResponse.transaction_status;
+        const userId = orderId.split('-')[2];
+
+        if (transactionStatus == 'settlement' || transactionStatus == 'capture') {
+            await bot.telegram.sendMessage(userId, `✅ *PEMBAYARAN BERHASIL!*\nPesanan \`${orderId}\` sukses.`);
+        }
+        res.status(200).send('OK');
+    } catch (error) {
+        res.status(500).send('Error');
+    }
+});
+
+// Launch
+bot.launch();
+app.listen(3000, '0.0.0.0', () => console.log(`🚀 Server Berjalan!`));
 bot.start((ctx) => {
     const produk = readData(DATA_PRODUK);
     if (produk.length === 0) return ctx.reply("Etalase kosong.");
